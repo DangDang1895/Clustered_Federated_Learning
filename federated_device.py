@@ -66,13 +66,14 @@ class Client():
         self.Client_train_loader = DataLoader(data_train, batch_size=batch_size, shuffle=True)
         self.Client_eval_loader = DataLoader(data_eval, batch_size=batch_size, shuffle=True) 
         '''**********************************数据分布*******************************************'''
+        '''
         #获得客户端数据分布数量
         self.class_counts = np.zeros(10)
         #获取类别数量
         for _, y in self.Client_train_loader:
             for i in range(len(y)):
                 self.class_counts[y[i]]+=1
-
+        
         #获得客户端数据分布比例
         self.class_rate = np.zeros(10)
         for i in range(len(self.class_counts)):
@@ -84,21 +85,16 @@ class Client():
 
         # 对客户端数据添加差分隐私噪声
         self.private_class = add_laplace_noise(self.class_counts, sensitivity, epsilon)        
-    
+        '''
     # 训练客户端模型并且计算权重更新
     def compute_weight_update(self, epochs):
         self.W_old = {key : value.clone() for key, value in self.W.items()}#保存旧模型参数
         '''****************训练***************************'''
         if self.Client_model=='MobileNetV2':
-            self.optimizer = torch.optim.SGD(self.Client_net.parameters(),lr=0.01, momentum=0.9,weight_decay=1e-6)
-            #self.scheduler = lr_scheduler.StepLR(self.optimizer, step_size=5, gamma=0.1)
-            #self.scheduler = lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=20)
-         
+            self.optimizer = torch.optim.SGD(self.Client_net.parameters(),lr=0.01, momentum=0.9,weight_decay=1e-6)         
         else:
             
             self.optimizer =torch.optim.SGD(self.Client_net.parameters(), lr=0.01,momentum=0.9,weight_decay=1e-6)
-            #self.scheduler = lr_scheduler.StepLR(self.optimizer, step_size=5, gamma=0.1)
-            #self.scheduler = lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=20)
         self.Client_net.train()  
         loss_epoch =0.0
         for _ in range(epochs):
@@ -108,7 +104,6 @@ class Client():
                 loss = torch.nn.CrossEntropyLoss()(self.Client_net(x), y)
                 loss.backward()
                 self.optimizer.step()  
-                #self.scheduler.step()
                 loss_epoch += loss.item()
         '''****************训练***************************'''
         self.W = {key : value for key, value in self.Client_net.named_parameters()} #获得新模型参数
@@ -134,7 +129,7 @@ class Client():
     def train_eval(self):
         acc = eval_op(model=self.Client_net,loader=self.Client_train_loader)
         return acc
-    
+    '''
     def get_classify(self,server):
         class_rate = self.class_rate
         #计算d
@@ -146,7 +141,7 @@ class Client():
             for i in range(len(class_rate)):
                 class_rate[i] = (class_rate[i] - server.global_ResNet8_classify[i])**2
             self.d = math.sqrt(class_rate.sum())
-
+    '''
 
 import random
 '''***************************服务器******************************************'''
@@ -206,10 +201,11 @@ class Server():
         self.Server_MobileNetV2 = MobileNetV2.to(device)
         self.Server_ResNet8 = ResNet8.to(device)
         self.model_cache = []
+        '''
         #如果不使用预训练模型，则使用pytorch默认的初始化。
-        #self.ResNet8_W = {key : value for key, value in self.Server_ResNet8.named_parameters()}
-        #self.MobileNetV2_W = {key : value for key, value in self.Server_MobileNetV2.named_parameters()}
-
+        self.ResNet8_W = {key : value for key, value in self.Server_ResNet8.named_parameters()}
+        self.MobileNetV2_W = {key : value for key, value in self.Server_MobileNetV2.named_parameters()}
+        '''
         #建立客户端和模型的映射
         self.mapping = {}
  
@@ -298,6 +294,7 @@ class Server():
             for i in range(len(list_ResNet8)):
                 self.mapping[list_ResNet8[i]]=self.ResNet8_W
 
+            '''
             #获取客户端数据分布，计算全局数据分布。
             MobileNetV2_classify = [client.private_class for client in clients if client.Client_model=='MobileNetV2']
             row_sum = np.sum(MobileNetV2_classify, axis=0)
@@ -308,7 +305,7 @@ class Server():
             self.global_ResNet8_classify = [ i/sum(row_sum)  for i in row_sum]
             print('global_MobileNetV2_classify: ',self.global_MobileNetV2_classify)
             print('global_ResNet8_classify: ',self.global_ResNet8_classify)
-
+            '''
                 
         else:
                 #对于新加入的客户端，尚未考虑。
@@ -319,22 +316,33 @@ class Server():
         #return random.sample(clients, int(len(clients)*frac)) 
 
 
-    #定义了一个按簇聚合权重更新的方法，该方法将同一簇中的客户端的权重更新聚合到该簇的权重上。
+    #加权聚合
     def aggregate_clusterwise(self, client_MobileNetV2_clusters,client_ResNet8_clusters):
         
         for cluster in client_MobileNetV2_clusters:
-            #print((flatten(cluster[0].dW)).shape)
+
+            all_data_size = 0.0
+            for client in cluster:
+                all_data_size += client.data_size
+            data_rate = {client.Client_id : client.data_size/all_data_size for client in cluster}
+
             model = self.mapping[cluster[0].Client_id]        
             for name in model:
-                tmp = torch.sum(torch.stack([client.dW[name].data * self.p[client.Client_id] for client in cluster]), dim=0).clone()
+                tmp = torch.sum(torch.stack([client.dW[name].data * data_rate[client.Client_id] for client in cluster]), dim=0).clone()
                 model[name].data+=tmp
             for client in cluster:
                 self.mapping[client.Client_id]=model
     
         for cluster in client_ResNet8_clusters:
+
+            all_data_size = 0.0
+            for client in cluster:
+                all_data_size += client.data_size
+            data_rate = {client.Client_id : client.data_size/all_data_size for client in cluster}
+
             model = self.mapping[cluster[0].Client_id]        
             for name in model:
-                tmp = torch.sum(torch.stack([client.dW[name].data * self.p[client.Client_id]  for client in cluster ]), dim=0).clone()
+                tmp = torch.sum(torch.stack([client.dW[name].data * data_rate[client.Client_id]  for client in cluster ]), dim=0).clone()
                 model[name].data+=tmp
             for client in cluster:
                 self.mapping[client.Client_id]=model
@@ -349,21 +357,14 @@ class Server():
         return torch.norm(torch.mean(torch.stack([flatten(client.dW) for client in cluster]), 
                                      dim=0)).item()
     
+    def compute_pairwise_similarities(self, clients):
+        return pairwise_angles([client.dW for client in clients])
 
     # 定义了一个缓存模型的方法，该方法将模型的参数、客户端ID和准确率存储到模型缓存列表中。
     def cache_model(self, idcs, accuracies):
         self.model_cache += [(idcs, [accuracies[i] for i in idcs])]
-        
-    '''
-    #定义了一个聚类客户端的方法，该方法使用层次聚类算法将客户端分为两个簇。
-    def cluster_clients(self, S):
-        clustering = AgglomerativeClustering(metric="precomputed", linkage="complete").fit(-S)
 
-        c1 = np.argwhere(clustering.labels_ == 0).flatten() 
-        c2 = np.argwhere(clustering.labels_ == 1).flatten() 
-        return c1, c2
     '''
-    
     def get_n_d_p(self, clients,a,b):
         sum_MobileNetV2 = 0.0
         sum_ResNet8=0.0
@@ -384,6 +385,5 @@ class Server():
                 sum_ResNet8+=np.maximum(client.data_size/data_size_ResNet8 - a * client.d + b, 0) 
                 
         self.p = {client.Client_id :  (np.maximum(client.data_size/data_size_MobileNetV2 - a * client.d + b, 0)/sum_MobileNetV2 if client.Client_model=='MobileNetV2' else  np.maximum(client.data_size/data_size_ResNet8 - a * client.d + b, 0)/sum_ResNet8 )for  client in clients}
-    
-    def compute_pairwise_similarities(self, clients):
-        return pairwise_angles([client.dW for client in clients])
+    '''
+
