@@ -13,6 +13,7 @@ import torch.optim.lr_scheduler as lr_scheduler
 import numpy as np
 import torch.nn as nn
 from sklearn.datasets import make_blobs
+import torch.optim.lr_scheduler as lr_scheduler
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -86,15 +87,23 @@ class Client():
         # 对客户端数据添加差分隐私噪声
         self.private_class = add_laplace_noise(self.class_counts, sensitivity, epsilon)        
         '''
+
+        
+        #这里的调整是指的本地调整，和round无关，和本地的迭代次数有关，因为每次到新的一轮，学习率又会重新成0.01
+       
     # 训练客户端模型并且计算权重更新
     def compute_weight_update(self, epochs):
+        self.optimizer = torch.optim.SGD(self.Client_net.parameters(),lr=0.01, momentum=0.9,weight_decay=1e-6)   
+        self.scheduler = lr_scheduler.StepLR(self.optimizer, step_size=1, gamma=0.1)
         self.W_old = {key : value.clone() for key, value in self.W.items()}#保存旧模型参数
         '''****************训练***************************'''
+        '''
         if self.Client_model=='MobileNetV2':
             self.optimizer = torch.optim.SGD(self.Client_net.parameters(),lr=0.01, momentum=0.9,weight_decay=1e-6)         
         else:
             
             self.optimizer =torch.optim.SGD(self.Client_net.parameters(), lr=0.01,momentum=0.9,weight_decay=1e-6)
+        '''
         self.Client_net.train()  
         loss_epoch =0.0
         for _ in range(epochs):
@@ -103,8 +112,9 @@ class Client():
                 self.optimizer.zero_grad()
                 loss = torch.nn.CrossEntropyLoss()(self.Client_net(x), y)
                 loss.backward()
-                self.optimizer.step()  
+                self.optimizer.step()    
                 loss_epoch += loss.item()
+            self.scheduler.step()      
         '''****************训练***************************'''
         self.W = {key : value for key, value in self.Client_net.named_parameters()} #获得新模型参数
         self.dW = subtract_(self.W, self.W_old) #获得参数更新
