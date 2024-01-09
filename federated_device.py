@@ -92,18 +92,18 @@ class Client():
         #这里的调整是指的本地调整，和round无关，和本地的迭代次数有关，因为每次到新的一轮，学习率又会重新成0.01
        
     # 训练客户端模型并且计算权重更新
-    def compute_weight_update(self, epochs):
-        self.optimizer = torch.optim.SGD(self.Client_net.parameters(),lr=0.01, momentum=0.9,weight_decay=1e-6)   
-        self.scheduler = lr_scheduler.StepLR(self.optimizer, step_size=1, gamma=0.1)
+    def compute_weight_update(self, epochs):    
         self.W_old = {key : value.clone() for key, value in self.W.items()}#保存旧模型参数
         '''****************训练***************************'''
-        '''
+        
         if self.Client_model=='MobileNetV2':
-            self.optimizer = torch.optim.SGD(self.Client_net.parameters(),lr=0.01, momentum=0.9,weight_decay=1e-6)         
+            self.optimizer = torch.optim.SGD(self.Client_net.parameters(),lr=0.01, momentum=0.9,weight_decay=1e-6)  
+            #self.scheduler = lr_scheduler.StepLR(self.optimizer, step_size=3, gamma=0.1)       
         else:
             
             self.optimizer =torch.optim.SGD(self.Client_net.parameters(), lr=0.01,momentum=0.9,weight_decay=1e-6)
-        '''
+            #self.scheduler = lr_scheduler.StepLR(self.optimizer, step_size=3, gamma=0.1)
+        
         self.Client_net.train()  
         loss_epoch =0.0
         for _ in range(epochs):
@@ -114,7 +114,7 @@ class Client():
                 loss.backward()
                 self.optimizer.step()    
                 loss_epoch += loss.item()
-            self.scheduler.step()      
+            #self.scheduler.step()      
         '''****************训练***************************'''
         self.W = {key : value for key, value in self.Client_net.named_parameters()} #获得新模型参数
         self.dW = subtract_(self.W, self.W_old) #获得参数更新
